@@ -152,6 +152,12 @@ class NotificationManager:
                 "color": "#0dcaf0",
                 "mention_user": False,
             },
+            "no_clear_departure_found": {
+                "title": "No Safe Departure Found",
+                "description": "No viable departure time was found within today's forecast window under the acceptable risk level.",
+                "color": "#ffc107",
+                "mention_user": False,
+            },
             "weather_api_error": {
                 "title": "API Check Failed",
                 "description": "Error fetching API data.",
