@@ -1,0 +1,13 @@
+# .dockerignore
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.idea
+.git
+.github
+.gitattributes
+.gitignore
+README.md
+docker-compose.prod.yml

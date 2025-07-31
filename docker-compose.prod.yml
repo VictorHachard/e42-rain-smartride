@@ -1,0 +1,13 @@
+services:
+  content_monitoring_system:
+    image: ghcr.io/VictorHachard/cms:v1.0.0
+    container_name: e42_rain_smartride
+    environment:
+      DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1234567890/ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      INTERVAL: "300"
+    volumes:
+      - app_data:/app/data
+
+volumes:
+  app_data:
+  

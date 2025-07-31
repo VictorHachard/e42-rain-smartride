@@ -1,0 +1,4 @@
+requests
+discord-webhook
+vha-toolbox
+tzlocal
