@@ -146,11 +146,17 @@ class NotificationManager:
                 "color": "#ffc107",
                 "mention_user": False,
             },
-            "best_departure_rain_check": {
-                "title": "Optimal Departure Forecast",
+            "best_departure_sunny": {
+                "title": "☀️ Optimal Departure Forecast",
                 "description": "Here is the detailed weather analysis to help you choose the best time to ride today.",
                 "color": "#0dcaf0",
-                "mention_user": False,
+                "mention_user": False
+            },
+            "best_departure_rainy": {
+                "title": "🌧️ Optimal Departure Forecast",
+                "description": "Here is the detailed weather analysis to help you choose the best time to ride today.",
+                "color": "#0dcaf0",
+                "mention_user": False
             },
             "no_clear_departure_found": {
                 "title": "No Safe Departure Found",

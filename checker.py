@@ -17,17 +17,18 @@ RISK_SCORE_THRESHOLD = 0.5
 
 # Avoid recommending a departure too early compared to latest arrival time.
 # This limits how far in advance the recommended time can be (in minutes).
-MAX_EARLY_DEPARTURE_DELTA_MINUTES = 120
+MAX_EARLY_DEPARTURE_DELTA_MINUTES = 60
 
-MAX_ACCEPTABLE_RAIN = 0.5  # mm
+MAX_ACCEPTABLE_RAIN = 0.4  # mm
 MAX_ACCEPTABLE_WIND_SPEED = 25  # km/h
+MIN_ACCEPTABLE_TEMP = 10  # Celsius
 MAX_TOLERATED_WIND_WITH_GOOD_DIRECTION = 35  # km/h
 
 RAIN_WEIGHT = 0.70
 PROB_WEIGHT = 0.30
 
 # --- Configuration by point ---
-LATEST_DEPARTURE = "17:45"
+LATEST_DEPARTURE = "07:45"
 COORDS = {
     "Tournai": {
         "lat": 50.6071,
@@ -56,10 +57,11 @@ COORDS = {
 }
 TRIP_DURATION_MINUTES = 15 * (len(COORDS) - 1)
 
+RISK_RAINY_THRESHOLD = 0.2
 
 # --- Fetch all data in one call ---
 def fetch_weather_data_batch(coord_map):
-    today = datetime.now().date()
+    today = datetime.now(LOCAL_TZ).replace(month=8, day=1, hour=2, minute=0, second=0, microsecond=0).date()
     start = today.isoformat()
     end = today.isoformat()
 
@@ -72,7 +74,7 @@ def fetch_weather_data_batch(coord_map):
             f"https://api.open-meteo.com/v1/forecast?"
             f"latitude={lat}&longitude={lon}"
             f"&hourly=precipitation_probability"
-            f"&minutely_15=precipitation,wind_speed_10m,wind_direction_10m"
+            f"&minutely_15=precipitation,temperature_2m,wind_speed_10m,wind_direction_10m"
             f"&start_date={start}&end_date={end}&timezone=UTC"
         )
         logging.info(f"[{name}] API call: {url}")
@@ -87,6 +89,7 @@ def fetch_weather_data_batch(coord_map):
         precip = raw["minutely_15"]["precipitation"]
         wind_speed = raw["minutely_15"]["wind_speed_10m"]
         wind_dir = raw["minutely_15"]["wind_direction_10m"]
+        temp_2m = raw["minutely_15"]["temperature_2m"]
 
         # Extract hourly precip prob
         hourly_times = [
@@ -107,9 +110,10 @@ def fetch_weather_data_batch(coord_map):
                 "precip": round(p or 0, 2),
                 "wind_speed": round(ws or 0, 1),
                 "wind_dir": round(wd or 0, 1),
+                "temp_2m": round(temp or 0, 1),
                 "precip_prob": hour_prob_map.get(t.replace(minute=0, second=0, microsecond=0), 0)
             }
-            for t, p, ws, wd in zip(times_local, precip, wind_speed, wind_dir)
+            for t, p, ws, wd, temp in zip(times_local, precip, wind_speed, wind_dir, temp_2m)
         }
 
     return result
@@ -129,7 +133,7 @@ def rain_forecast_and_notify():
         })
         return
 
-    now = datetime.now(LOCAL_TZ).replace(hour=13, minute=45, second=0, microsecond=0)
+    now = datetime.now(LOCAL_TZ).replace(month=8, day=1, hour=2, minute=0, second=0, microsecond=0)
     if now.minute % 15 != 0:
         now += timedelta(minutes=15 - (now.minute % 15))
 
@@ -154,9 +158,11 @@ def rain_forecast_and_notify():
             rain_values = {}
             wind_values = {}
             prob_values = {}
+            temp_2m_values = {}
             exceeds_rain = False
             exceeds_wind = False
             bad_wind_direction = False
+            too_cold = False
 
             total_risk_score = 0
             count = 0
@@ -167,10 +173,12 @@ def rain_forecast_and_notify():
                 wind_speed = entry["wind_speed"]
                 wind_dir = entry["wind_dir"]
                 precip_prob = entry.get("precip_prob", 0)
+                temp_2m = entry["temp_2m"]
 
                 cfg = COORDS[point]
 
                 rain_values[point] = rain
+                temp_2m_values[point] = temp_2m
                 wind_values[point] = (wind_speed, wind_dir)
                 prob_values[point] = precip_prob
 
@@ -201,6 +209,10 @@ def rain_forecast_and_notify():
                     if not is_direction_ok or wind_speed > MAX_TOLERATED_WIND_WITH_GOOD_DIRECTION:
                         exceeds_wind = True
 
+                # Temperature check
+                if temp_2m <= MIN_ACCEPTABLE_TEMP:
+                    too_cold = True
+
             avg_precip = round(sum(rain_values.values()) / len(rain_values), 2)
             avg_prob = round(sum(prob_values.values()) / len(prob_values), 1)
             avg_risk_score = round(total_risk_score / count, 2)
@@ -210,11 +222,13 @@ def rain_forecast_and_notify():
                 "rain": rain_values,
                 "wind": wind_values,
                 "prob": prob_values,
+                "temp_2m": temp_2m_values,
                 "avg": avg_precip,
                 "avg_prob": avg_prob,
                 "avg_rain_risk": avg_risk_score,
                 "exceeds_rain": exceeds_rain,
                 "exceeds_wind": exceeds_wind,
+                "too_cold": too_cold,
                 "bad_wind_dir": bad_wind_direction
             })
 
@@ -236,6 +250,7 @@ def rain_forecast_and_notify():
         c["departure"] for c in candidates
         if not c["exceeds_rain"]
         and not c["exceeds_wind"]
+        and not c["too_cold"]
         and c["avg_rain_risk"] <= RISK_SCORE_THRESHOLD
     ]
 
@@ -245,10 +260,8 @@ def rain_forecast_and_notify():
         })
         return
 
-    latest_acceptable_departure = max(valid_departures)
-
     for i, c in enumerate(candidates):
-        if c["exceeds_rain"] or c["exceeds_wind"]:
+        if c["exceeds_rain"] or c["exceeds_wind"] or c["too_cold"]:
             continue
 
         score = c["avg_rain_risk"]
@@ -274,13 +287,14 @@ def rain_forecast_and_notify():
             rain = c["rain"][pt]
             wind_speed, wind_dir = c["wind"][pt]
             prob = c["prob"][pt]
-            line = f"{rain} mm | {wind_speed} km/h | {prob}%"
+            temp_2m = c["temp_2m"][pt]
+            line = f"{rain} mm | {wind_speed} km/h | {temp_2m} ° | {prob}%"
             lines.append(line)
 
-        content = " → ".join(lines)
+        content = " \n ".join(lines)
 
         prefix = ""
-        if c["exceeds_rain"] or c["exceeds_wind"] or c["avg_rain_risk"] > RISK_SCORE_THRESHOLD:
+        if c["exceeds_rain"] or c["exceeds_wind"] or c["too_cold"] or c["avg_rain_risk"] > RISK_SCORE_THRESHOLD:
             prefix = "🔴 "
         elif i == best_index:
             prefix = "🟢 "
@@ -289,7 +303,13 @@ def rain_forecast_and_notify():
 
         fields[f"{prefix}{departure_str} → {estimated_arrival_str} (risk={c['avg_rain_risk']})"] = content
 
+    template_key = (
+        "best_departure_rainy"
+        if candidates[best_index]["avg_rain_risk"] >= RISK_RAINY_THRESHOLD
+        else "best_departure_sunny"
+    )
+
     notification_manager.send(
-        "best_departure_rain_check",
+        template_key,
         fields=fields
     )
