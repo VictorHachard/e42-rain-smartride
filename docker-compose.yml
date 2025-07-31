@@ -1,6 +1,11 @@
 services:
   e42_rain_smartride:
-    image: ghcr.io/VictorHachard/cms:v1.0.0
+    build: .
+    develop:
+      watch: 
+        - path: ./
+          action: sync+restart
+          target: /app
     container_name: e42_rain_smartride
     environment:
       DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1234567890/ABCDEFGHIJKLMNOPQRSTUVWXYZ"
