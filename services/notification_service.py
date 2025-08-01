@@ -146,14 +146,8 @@ class NotificationManager:
                 "color": "#ffc107",
                 "mention_user": False,
             },
-            "best_departure_sunny": {
-                "title": "☀️ Optimal Departure Forecast",
-                "description": "Here is the detailed weather analysis to help you choose the best time to ride today.",
-                "color": "#0dcaf0",
-                "mention_user": False
-            },
-            "best_departure_rainy": {
-                "title": "🌧️ Optimal Departure Forecast",
+            "best_departure": {
+                "title": "Optimal Departure Forecast",
                 "description": "Here is the detailed weather analysis to help you choose the best time to ride today.",
                 "color": "#0dcaf0",
                 "mention_user": False
@@ -172,7 +166,7 @@ class NotificationManager:
             },
         }
 
-    def send(self, key, url=None, fields=None):
+    def send(self, key, url=None, fields=None, title=None, description=None):
         """
         Sends a notification using the template identified by `key`.
         """
@@ -181,8 +175,8 @@ class NotificationManager:
             raise ValueError(f"Notification template not found for key '{key}'")
 
         self.notif_service.send(
-            title=template["title"],
-            description=template["description"],
+            title=title or template["title"],
+            description=description or template["description"],
             url=url,
             fields=fields or {},
             color=template.get("color", "#0dcaf0"),
