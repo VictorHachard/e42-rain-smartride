@@ -6,7 +6,7 @@ from tzlocal import get_localzone
 
 from vha_toolbox import seconds_to_humantime
 from check_version import check_for_update
-from checker import rain_forecast_and_notify
+from ride_weather_advisor import RideWeatherAdvisor
 from services import *
 
 logging.basicConfig(
@@ -100,7 +100,12 @@ if __name__ == "__main__":
     del update, current_version
     logging.info(f"Starting checks with interval of {interval} seconds")
     
+    advisor = RideWeatherAdvisor(mode="morning", now=datetime(2025, 8, 2, 6, 0))
+    advisor.run_forecast_and_notify()
+    advisor = RideWeatherAdvisor(mode="evening", now=datetime(2025, 8, 2, 6, 0))
+    advisor.run_forecast_and_notify()
+
     #while True:
-    rain_forecast_and_notify()
-    time.sleep(interval)
+    #rain_forecast_and_notify()
+    #time.sleep(interval)
 

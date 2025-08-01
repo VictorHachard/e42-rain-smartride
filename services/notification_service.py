@@ -154,7 +154,7 @@ class NotificationManager:
             },
             "no_clear_departure_found": {
                 "title": "No Safe Departure Found",
-                "description": "No viable departure time was found within today's forecast window under the acceptable risk level.",
+                "description": "No safe departure slot available.",
                 "color": "#ffc107",
                 "mention_user": False,
             },
