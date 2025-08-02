@@ -11,6 +11,8 @@ services:
       DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1234567890/ABCDEFGHIJKLMNOPQRSTUVWXYZ"
       INTERVAL: "300"
       TZ: Europe/Brussels
+      LANG: fr_BE.UTF-8
+      LC_ALL: fr_BE.UTF-8
     volumes:
       - app_data:/app/data
 

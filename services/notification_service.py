@@ -146,6 +146,18 @@ class NotificationManager:
                 "color": "#ffc107",
                 "mention_user": False,
             },
+            "round_trip_departure": {
+                "title": "Optimal Round-Trip Forecast",
+                "description": "The departure and return have been selected to ensure the best possible comfort and safety.",
+                "color": "#20c997",
+                "mention_user": False
+            },
+            "no_round_trip_departure": {
+                "title": "🚫 No Round-Trip Forecast",
+                "description": "Today’s conditions don’t allow for a safe and comfortable round-trip",
+                "color": "#ffc107",
+                "mention_user": False
+            },
             "best_departure": {
                 "title": "Optimal Departure Forecast",
                 "description": "Here is the detailed weather analysis to help you choose the best time to ride today.",

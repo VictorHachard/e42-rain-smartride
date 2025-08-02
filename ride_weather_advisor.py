@@ -1,22 +1,21 @@
-from datetime import datetime, timedelta, timezone
-import time
-import requests
+from datetime import datetime, timedelta
 import logging
 from services import ConfigurationService
-from wmo_codes import WMO_CODES
+from weather_api import WeatherAPI
+from wmo_codes import get_localized_wmo_codes
 from tzlocal import get_localzone
 
 class RideWeatherAdvisor:
     def __init__(self,
         mode="evening",
-        morning_latest_departure="07:45",
+        morning_latest_departure="09:45",
         morning_max_early_delta_min=45,
-        evening_first_departure="17:30",
+        evening_first_departure="11:30",
         evening_max_late_delta_min=30,
         trip_duration_minutes=45,
         gear_level=-1,
         max_acceptable_rain=0.2,
-        max_acceptable_wind_speed=25,
+        max_acceptable_wind_speed_10m=25,
         max_tolerated_wind_with_good_dir=35,
         min_acceptable_temp=6,
         risk_score_tolerance=0.15,
@@ -32,7 +31,7 @@ class RideWeatherAdvisor:
         self.TRIP_DURATION_MINUTES = trip_duration_minutes
         self.GEAR_LEVEL = gear_level
         self.MAX_ACCEPTABLE_RAIN = max_acceptable_rain
-        self.MAX_ACCEPTABLE_WIND_SPEED = max_acceptable_wind_speed
+        self.MAX_ACCEPTABLE_wind_speed_10m = max_acceptable_wind_speed_10m
         self.MAX_TOLERATED_WIND_WITH_GOOD_DIRECTION = max_tolerated_wind_with_good_dir
         self.MIN_ACCEPTABLE_TEMP = min_acceptable_temp
         self.RISK_SCORE_TOLERANCE = risk_score_tolerance
@@ -43,115 +42,53 @@ class RideWeatherAdvisor:
         self.LOCAL_TZ = get_localzone()
         self.NOW = now.astimezone(self.LOCAL_TZ) if now else datetime.now(self.LOCAL_TZ)
 
+        self._weather_data_cache = {}
+        self.weather_API = WeatherAPI()
+
     def get_coords(self):
         return {
             "morning": {
-                "Tournai": {"lat": 50.6071, "lon": 3.3893, "dir_min": 270, "dir_max": 360},
-                "E42":     {"lat": 50.549,  "lon": 3.525,  "dir_min": 270, "dir_max": 360},
-                "E42bis":  {"lat": 50.474,  "lon": 3.742,  "dir_min": 180, "dir_max": 360},
+                "Tournai": {"lat": 50.6071, "lon": 3.3893, "dir_min": 270,  "dir_max": 360},
+                "E42":     {"lat": 50.549,  "lon": 3.525,  "dir_min": 270,  "dir_max": 360},
+                "E42bis":  {"lat": 50.474,  "lon": 3.742,  "dir_min": 180,  "dir_max": 360},
                 "Mons":    {"lat": 50.4541, "lon": 3.9523, "dir_min": None, "dir_max": None},
             },
             "evening": {
-                "Mons":    {"lat": 50.4541, "lon": 3.9523, "dir_min": 45, "dir_max": 135},
-                "E42bis":  {"lat": 50.474,  "lon": 3.742,  "dir_min": 90, "dir_max": 180},
-                "E42":     {"lat": 50.549,  "lon": 3.525,  "dir_min": 90, "dir_max": 180},
+                "Mons":    {"lat": 50.4541, "lon": 3.9523, "dir_min": 45,   "dir_max": 135},
+                "E42bis":  {"lat": 50.474,  "lon": 3.742,  "dir_min": 90,   "dir_max": 180},
+                "E42":     {"lat": 50.549,  "lon": 3.525,  "dir_min": 90,   "dir_max": 180},
                 "Tournai": {"lat": 50.6071, "lon": 3.3893, "dir_min": None, "dir_max": None},
             }
         }[self.MODE]
 
-    def compute_risk(self, wind_speed, precip, temp, weather_code, wind_dir, coord_key):
+    def compute_risk(self, wind_speed_10m, precipitation, temperature_2m, weather_code, wind_direction_10m, coord_key):
         if weather_code in self.BANNED_WMO_CODES:
             return 1.0
         COORDS = self.get_coords()
         dir_min = COORDS[coord_key].get("dir_min")
         dir_max = COORDS[coord_key].get("dir_max")
-        wind_dir_ok = dir_min is None or dir_max is None or dir_min <= wind_dir <= dir_max
+        wind_direction_10m_ok = dir_min is None or dir_max is None or dir_min <= wind_direction_10m <= dir_max
         score = 0.0
-        if wind_speed > self.MAX_ACCEPTABLE_WIND_SPEED:
-            if not wind_dir_ok or wind_speed > self.MAX_TOLERATED_WIND_WITH_GOOD_DIRECTION:
+        if wind_speed_10m > self.MAX_ACCEPTABLE_wind_speed_10m:
+            if not wind_direction_10m_ok or wind_speed_10m > self.MAX_TOLERATED_WIND_WITH_GOOD_DIRECTION:
                 score += 0.6
-        if precip > self.MAX_ACCEPTABLE_RAIN:
+        if precipitation > self.MAX_ACCEPTABLE_RAIN:
             score += 0.6
-        if temp < self.MIN_ACCEPTABLE_TEMP:
+        if temperature_2m < self.MIN_ACCEPTABLE_TEMP:
             score += 0.6
         return min(score, 1.0)
 
-    def compute_discomfort(self, temp, precip, wind_speed, gear_level):
-        ideal_temp = {0: 21, 1: 13, 2: 8}[gear_level]
-        temp_penalty = abs(temp - ideal_temp) / 20
-        rain_penalty = min(precip / 1.5, 1.0)
-        wind_penalty = max(0, (wind_speed - 15) / 25)
+    def compute_discomfort(self, temperature_2m, precipitation, wind_speed_10m, gear_level):
+        ideal_temp = {0: 22, 1: 14, 2: 10}[gear_level]
+        temp_penalty = abs(temperature_2m - ideal_temp) / 20
+        rain_penalty = min(precipitation / 1.5, 1.0)
+        wind_penalty = max(0, (wind_speed_10m - 15) / 25)
         return min(temp_penalty + rain_penalty + wind_penalty, 1.0)
 
-    def fetch_weather_data_batch(self, coord_map):
-        today = self.NOW.date()
-        start = today.isoformat()
-        end = today.isoformat()
-        result = {}
-
-        for name, cfg in coord_map.items():
-            lat = cfg["lat"]
-            lon = cfg["lon"]
-            url = (
-                f"https://api.open-meteo.com/v1/forecast?"
-                f"latitude={lat}&longitude={lon}"
-                f"&hourly=precipitation_probability"
-                f"&minutely_15=precipitation,temperature_2m,wind_speed_10m,wind_direction_10m,weather_code"
-                f"&start_date={start}&end_date={end}&timezone=UTC&models=meteofrance_arpege_europe"
-            )
-
-            for attempt in range(3):
-                try:
-                    logging.info(f"[{name}] API call attempt {attempt + 1}/3: {url}")
-                    r = requests.get(url, timeout=5)
-                    r.raise_for_status()
-                    raw = r.json()
-                    break
-                except requests.RequestException as e:
-                    logging.warning(f"[{name}] API call failed ({attempt + 1}/3): {e}")
-                    if attempt == 2:
-                        raise
-                    time.sleep(1)
-
-            times_utc = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc) for t in raw["minutely_15"]["time"]]
-            times_local = [t.astimezone(self.LOCAL_TZ) for t in times_utc]
-            precip = raw["minutely_15"]["precipitation"]
-            wind_speed = raw["minutely_15"]["wind_speed_10m"]
-            wind_dir = raw["minutely_15"]["wind_direction_10m"]
-            temp_2m = raw["minutely_15"]["temperature_2m"]
-            weather_codes = raw["minutely_15"]["weather_code"]
-
-            hourly_times = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc).astimezone(self.LOCAL_TZ)
-                            for t in raw["hourly"]["time"]]
-            hourly_precip_prob = raw["hourly"]["precipitation_probability"]
-            hour_prob_map = {
-                dt.replace(minute=0, second=0, microsecond=0): p
-                for dt, p in zip(hourly_times, hourly_precip_prob)
-            }
-
-            result[name] = {
-                t: {
-                    "precip": round(p or 0, 2),
-                    "wind_speed": round(ws or 0, 1),
-                    "wind_dir": round(wd or 0, 1),
-                    "temp_2m": round(temp or 0, 1),
-                    "precip_prob": hour_prob_map.get(t.replace(minute=0, second=0, microsecond=0), 0),
-                    "weather_code": code
-                }
-                for t, p, ws, wd, temp, code in zip(times_local, precip, wind_speed, wind_dir, temp_2m, weather_codes)
-            }
-
-        return result
-
     def select_best_departure(self, candidates):
-        valid = [c for c in candidates if c["risk"] <= self.RISK_SCORE_THRESHOLD]
-
-        if not valid:
-            return None
-
         reverse = self.MODE == "morning"
         sorted_candidates = sorted(
-            valid,
+            candidates,
             key=lambda c: (round(c["risk"] + c["discomfort"], 3), c["departure"]),
             reverse=reverse
         )
@@ -169,14 +106,13 @@ class RideWeatherAdvisor:
         else:  # evening
             return min(close_candidates, key=lambda c: c["departure"])
 
-
-    def run_forecast_and_notify(self):
+    def run_forecast(self):
         config = ConfigurationService()
         notify = config.get_config("notification_manager")
-        COORDS = self.get_coords()
 
+        COORDS = self.get_coords()
         try:
-            data = self.fetch_weather_data_batch(COORDS)
+            data = self.weather_API.fetch_forecast(COORDS, self.NOW)
         except Exception as e:
             notify.send("weather_api_error", fields={"Error": str(e)})
             return
@@ -219,13 +155,14 @@ class RideWeatherAdvisor:
 
                     for pt, t in segments.items():
                         w = data[pt][t]
-                        risk_scores.append(self.compute_risk(w["wind_speed"], w["precip"], w["temp_2m"], w["weather_code"], w["wind_dir"], pt))
-                        discomfort_scores.append(self.compute_discomfort(w["temp_2m"], w["precip"], w["wind_speed"], level))
+                        risk_scores.append(self.compute_risk(w["wind_speed_10m"], w["precipitation"], w["temperature_2m"], w["weather_code"], w["wind_direction_10m"], pt))
+                        discomfort_scores.append(self.compute_discomfort(w["temperature_2m"], w["precipitation"], w["wind_speed_10m"], level))
 
                     candidates.append({
                         "departure": dt,
                         "risk": max(risk_scores),
-                        "discomfort": max(discomfort_scores)
+                        "discomfort": max(discomfort_scores),
+                        "refused": max(risk_scores) > self.RISK_SCORE_THRESHOLD or max(discomfort_scores) > self.RISK_SCORE_THRESHOLD
                     })
                 except KeyError:
                     continue
@@ -234,12 +171,109 @@ class RideWeatherAdvisor:
             if best:
                 options.append({"level": level, "candidates": candidates, "best": best})
 
+        return {
+            "data": data,
+            "coords": COORDS,
+            "options": options
+        }
+
+    def combine_forecasts_same_gear(self, morning_result, evening_result):
+        if not morning_result["options"] or not evening_result["options"]:
+            return None
+
+        combined = []
+
+        for option_m in morning_result["options"]:
+            if option_m["best"]:
+                level = option_m["level"]
+                match = next((o for o in evening_result["options"] if o["level"] == level), None)
+                if match and match["best"]:
+                    combined.append({
+                        "level": level,
+                        "morning": option_m["best"],
+                        "evening": match["best"],
+                        "total_risk": option_m["best"]["risk"] + match["best"]["risk"],
+                        "total_discomfort": option_m["best"]["discomfort"] + match["best"]["discomfort"],
+                        "refused": option_m["best"]["refused"] or match["best"]["refused"],
+                    })
+
+        if not combined:
+            return None
+
+        # On prend le combo avec la somme score la plus basse
+        best = min(combined, key=lambda o: (round(o["total_risk"] + o["total_discomfort"], 3)))
+        return best
+
+    def notify_forecast_summary(self, forecast_result):
+        config = ConfigurationService()
+        notify = config.get_config("notification_manager")
+
+    
+        level = forecast_result["level"]
+        dep_m = forecast_result["morning"]["departure"]
+        dep_e = forecast_result["evening"]["departure"]
+        risk_m = forecast_result["morning"]["risk"]
+        risk_e = forecast_result["evening"]["risk"]
+        disc_m = forecast_result["morning"]["discomfort"]
+        disc_e = forecast_result["evening"]["discomfort"]
+
+        if forecast_result["refused"]:
+            notify.send(
+                "no_round_trip_departure",
+            )
+            return
+
+        level_desc = {0: "summer gear", 1: "mid-season gear", 2: "winter gear"}[level]
+
+        title = f"🏍️ Round-trip Forecast — {self.NOW.strftime('%A %d %B %Y')}"
+        description = (
+            f"Here is the round-trip weather forecast for **{self.NOW.strftime('%A %d %B %Y')}**.\n"
+            f"Recommended gear: **{level_desc}**.\n\n"
+            f"**Departure at {dep_m.strftime('%H:%M')}** — "
+            f"Risk: {risk_m:.2f}, Discomfort: {disc_m:.2f}\n"
+            f"**Return at {dep_e.strftime('%H:%M')}** — "
+            f"Risk: {risk_e:.2f}, Discomfort: {disc_e:.2f}"
+        )
+
+        notify.send("round_trip_departure", title=title, description=description)
+
+    def run_and_notify_day(self):
+        morning = RideWeatherAdvisor(mode="morning", gear_level=-1, now=self.NOW)
+        evening = RideWeatherAdvisor(mode="evening", gear_level=-1, now=self.NOW)
+
+        morning_result = morning.run_forecast()
+        evening_result = evening.run_forecast()
+        logging.info(morning_result)
+        logging.info(evening_result)
+
+        combo = self.combine_forecasts_same_gear(morning_result, evening_result)
+        
+        if combo:
+            gear = combo['level']
+            self.notify_forecast_summary(combo)
+            morning.notify_forecast(morning_result, gear)
+            evening.notify_forecast(evening_result, gear)
+        
+        else:
+            morning.notify_forecast(morning_result)
+            evening.notify_forecast(evening_result)
+
+    def notify_forecast(self, forecast_result, gear=None):
+        config = ConfigurationService()
+        notify = config.get_config("notification_manager")
+
+        data = forecast_result["data"]
+        COORDS = forecast_result["coords"]
+        options = forecast_result["options"]
+
         if not options:
             notify.send("no_clear_departure_found")
             return
 
-        # Select the overall best
-        overall = min(options, key=lambda o: o["best"]["risk"] + o["best"]["discomfort"])
+        if gear == None:
+            overall = min(options, key=lambda o: o["best"]["risk"] + o["best"]["discomfort"])
+        else:
+            overall = [o for o in options if o["level"] == gear][0]
 
         fields = {}
         for c in overall["candidates"]:
@@ -247,21 +281,27 @@ class RideWeatherAdvisor:
             arrival = departure + timedelta(minutes=self.TRIP_DURATION_MINUTES)
             dep_str = departure.strftime("%H:%M")
             arr_str = arrival.strftime("%H:%M")
-            prefix = "🟢 " if c == overall["best"] else "🔴 " if c["risk"] > self.RISK_SCORE_THRESHOLD else "🟡 "
+            prefix = (
+                "🟢 " if c == overall["best"] and not c["refused"]
+                else "🔴 " if c["refused"]
+                else "🟡 "
+            )
 
             lines = []
-            for pt in COORDS:
+            for i, pt in enumerate(COORDS):
                 try:
-                    w = data[pt][departure + timedelta(minutes=15 * list(COORDS).index(pt))]
-                    wind_dir_ok = True
+                    t = departure + timedelta(minutes=15 * i)
+                    w = data[pt][t]
                     cfg = COORDS[pt]
-                    if cfg["dir_min"] is not None and cfg["dir_max"] is not None:
-                        wind_dir_ok = cfg["dir_min"] <= w["wind_dir"] <= cfg["dir_max"]
 
-                    lines.append(
-                        f"{pt}: {w['precip']} mm | {w['wind_speed']} km/h | {w['temp_2m']}° | Dir {w['wind_dir']}° " +
-                        ('' if cfg["dir_min"] is None or cfg["dir_max"] is None else ('✅' if wind_dir_ok else '❌'))
-                    )
+                    wind_note = ""
+                    if cfg["dir_min"] is not None and cfg["dir_max"] is not None:
+                        if cfg["dir_min"] <= w["wind_direction_10m"] <= cfg["dir_max"]:
+                            wind_note = " ✅"
+                        else:
+                            wind_note = " ❌"
+
+                    lines.append(w["print"] + wind_note)
                 except KeyError:
                     continue
 
@@ -274,7 +314,7 @@ class RideWeatherAdvisor:
             if overall['best']['departure'] + timedelta(minutes=15 * i) in data[pt]),
             default=0
         )
-        info = WMO_CODES.get(worst_code, {"emoji": "❓", "desc": "Unknown"})
+        info = get_localized_wmo_codes().get(worst_code, {"emoji": "❓", "desc": "Unknown"})
         level_desc = {0: "summer gear", 1: "mid-season gear", 2: "winter gear"}[overall["level"]]
 
         forecast_date_str = self.NOW.strftime("%A %d %B %Y")
