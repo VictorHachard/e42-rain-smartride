@@ -100,7 +100,7 @@ if __name__ == "__main__":
     del update, current_version
     logging.info(f"Starting checks with interval of {interval} seconds")
 
-    advisor = RideWeatherAdvisor(now=datetime(2025, 8, 2, 6, 0))
+    advisor = RideWeatherAdvisor(now=datetime(2025, 8, 4, 6, 0))
     advisor.run_and_notify_day()
 
     #while True:

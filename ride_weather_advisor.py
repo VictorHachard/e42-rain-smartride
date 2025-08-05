@@ -10,7 +10,7 @@ class RideWeatherAdvisor:
         mode="evening",
         morning_latest_departure="09:45",
         morning_max_early_delta_min=45,
-        evening_first_departure="11:30",
+        evening_first_departure="12:30",
         evening_max_late_delta_min=30,
         trip_duration_minutes=45,
         gear_level=-1,
@@ -220,22 +220,27 @@ class RideWeatherAdvisor:
         if forecast_result["refused"]:
             notify.send(
                 "no_round_trip_departure",
+                args={
+                    "forecast_date": self.NOW,
+                }
             )
             return
 
         level_desc = {0: "summer gear", 1: "mid-season gear", 2: "winter gear"}[level]
 
-        title = f"🏍️ Round-trip Forecast — {self.NOW.strftime('%A %d %B %Y')}"
-        description = (
-            f"Here is the round-trip weather forecast for **{self.NOW.strftime('%A %d %B %Y')}**.\n"
-            f"Recommended gear: **{level_desc}**.\n\n"
-            f"**Departure at {dep_m.strftime('%H:%M')}** — "
-            f"Risk: {risk_m:.2f}, Discomfort: {disc_m:.2f}\n"
-            f"**Return at {dep_e.strftime('%H:%M')}** — "
-            f"Risk: {risk_e:.2f}, Discomfort: {disc_e:.2f}"
+        notify.send(
+            "round_trip_departure",
+            args={
+                "forecast_date": self.NOW,
+                "level_desc": level_desc,
+                "dep_m": dep_m.strftime('%H:%M'),
+                "risk_m": round(risk_m, 2),
+                "disc_m": round(disc_m, 2),
+                "dep_e": dep_e.strftime('%H:%M'),
+                "risk_e": round(risk_e, 2),
+                "disc_e": round(disc_e, 2),
+            }
         )
-
-        notify.send("round_trip_departure", title=title, description=description)
 
     def run_and_notify_day(self):
         morning = RideWeatherAdvisor(mode="morning", gear_level=-1, now=self.NOW)
@@ -317,16 +322,13 @@ class RideWeatherAdvisor:
         info = get_localized_wmo_codes().get(worst_code, {"emoji": "❓", "desc": "Unknown"})
         level_desc = {0: "summer gear", 1: "mid-season gear", 2: "winter gear"}[overall["level"]]
 
-        forecast_date_str = self.NOW.strftime("%A %d %B %Y")
-        ride_label = "Departure" if self.MODE == "morning" else "Return"
-
         notify.send(
-            "best_departure",
+            "best_departure" if self.MODE == "morning" else "best_return",
             fields=fields,
-            title = f"{info['emoji']} {ride_label} Forecast — {forecast_date_str}",
-            description=(
-                f"Here is the detailed weather analysis to help you choose the best time to ride on **{forecast_date_str}**.\n"
-                f"Recommended time assumes you're wearing **{level_desc}**.\n"
-                f"The most significant condition expected during the ride: **{info['desc'].capitalize()}**."
-            )
+            args={
+                "forecast_date": self.NOW,
+                "level_desc": level_desc,
+                "info_emoji": info['emoji'],
+                "info_desc": info['desc'].capitalize(),
+            }
         )
