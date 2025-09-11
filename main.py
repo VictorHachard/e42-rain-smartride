@@ -2,6 +2,7 @@ import time
 import logging
 import argparse
 from datetime import datetime, timedelta
+from agenda_utils import get_first_and_last_class
 from tzlocal import get_localzone
 
 from vha_toolbox import seconds_to_humantime
@@ -51,25 +52,6 @@ def update_notification_status(today, status=True):
     file_service.save_json('daily_notification_status.json', status_data)
 
 
-def send_daily_discord_notification(config_service):
-    """
-    if it hasn't been sent yet. Expects the daily log file to be stored as 'daily_log.json'
-    in the storage directory.
-    """
-    file_service = config_service.get_config("file_service")
-    
-    today = (datetime.now()).strftime('%Y-%m-%d')
-
-    if has_notification_been_sent(today):
-        logging.info(f"Daily notification for {today} has already been sent.")
-        return
-
-
-    
-        logging.info(f"Daily notification sent for {today}")
-    update_notification_status(today, status=True)
-
-
 if __name__ == "__main__":
     logging.info("Starting E42 Rain Smartride")
     logging.info(f"Local timezone: {get_localzone()}")
@@ -100,9 +82,31 @@ if __name__ == "__main__":
     del update, current_version
     logging.info(f"Starting checks with interval of {interval} seconds")
 
-    advisor = RideWeatherAdvisor(now=datetime(2025, 8, 4, 6, 0))
-    advisor.run_and_notify_day()
+    while True:
+        now = datetime.now()
+        # Check if today's notification has already been sent
+        if not has_notification_been_sent(now.date().isoformat()):
+            agenda_url = "https://hehplanning2025.umons.ac.be/Telechargements/ical/Edt_M0_Pass_Info_vers_Master_Informatique.ics?version=2025.5.6&icalsecurise=08861B133B1D1B3671E24F0A0B3CDF7F38107CD1F4F05BE68F3EB400F66270D3A53470C915AD2045ABD49481A5055CA9&param=643d5b312e2e36325d2666683d3126663d3131303030"
+            trip_duration_minutes = 45
 
-    #while True:
-    #rain_forecast_and_notify()
-    #time.sleep(interval)
+            first_class, last_class = get_first_and_last_class(agenda_url, now)
+            morning_window_start = first_class - timedelta(hours=3)
+            if morning_window_start >= now:
+                if first_class and last_class:
+                    leave_latest = (first_class - timedelta(minutes=trip_duration_minutes)).time()
+                    morning_latest_departure = leave_latest.strftime("%H:%M")
+                    evening_first_departure = last_class.strftime("%H:%M")
+
+                    logging.info(f"First class at {first_class}, last class at {last_class}")
+                    logging.info(f"Morning latest departure set to {morning_latest_departure}")
+                    logging.info(f"Evening first departure set to {evening_first_departure}")
+
+                    advisor = RideWeatherAdvisor(
+                        now=now, 
+                        morning_latest_departure=morning_latest_departure,
+                        evening_first_departure=evening_first_departure,
+                        trip_duration_minutes=trip_duration_minutes
+                    )
+                    advisor.run_and_notify_day()
+                    update_notification_status(now.date().isoformat(), True)
+

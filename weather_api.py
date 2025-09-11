@@ -53,7 +53,7 @@ class WeatherAPI:
         cache_key = (tuple(sorted((k, tuple(v.items())) for k, v in coord_map.items())), date_str)
 
         if cache_key in self._weather_data_cache:
-            logging.info(f"[cache] Using cached forecast for {date_str}")
+            logging.info(f"[weather] Using cached forecast for {date_str}")
             return self._weather_data_cache[cache_key]
 
         raw = self._fetch_batch(coord_map, date_str)
@@ -81,7 +81,7 @@ class WeatherAPI:
 
         for attempt in range(retries):
             try:
-                logging.info(f"[batch] API call attempt {attempt + 1}/{retries}: {url}")
+                logging.info(f"[weather] API call attempt {attempt + 1}/{retries}: {url}")
                 r = requests.get(url, timeout=10)
                 r.raise_for_status()
                 raw_all = r.json()
@@ -90,55 +90,91 @@ class WeatherAPI:
                 else:
                     raise ValueError("Unexpected API response format for multi-point forecast")
             except requests.RequestException as e:
-                logging.warning(f"[batch] API call failed ({attempt + 1}/{retries}): {e}")
+                logging.warning(f"[weather] API call failed ({attempt + 1}/{retries}): {e}")
                 if attempt == retries - 1:
                     raise
                 time.sleep(1)
 
     def _to_local_times(self, raw_forecast):
         result = {}
+        REQUIRED = ("precipitation", "temperature_2m", "wind_speed_10m", "wind_direction_10m", "weather_code")
+
         for name, raw in raw_forecast.items():
             result[name] = {}
-
             try:
-                times_utc = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc) for t in raw["minutely_15"]["time"]]
+                m15 = raw.get("minutely_15") or {}
+                times_utc = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc) for t in (m15.get("time") or [])]
                 times_local = [t.astimezone(self.LOCAL_TZ) for t in times_utc]
 
+                # map hourly fields (if any) to local rounded hour
                 hourly_prob_map = {}
-                if raw.get("hourly") and raw["hourly"].get("time"):
-                    hourly_utc = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc) for t in raw["hourly"]["time"]]
+                hourly = raw.get("hourly") or {}
+                if hourly.get("time"):
+                    hourly_utc = [datetime.fromisoformat(t).replace(tzinfo=timezone.utc) for t in hourly["time"]]
                     hourly_local = [t.astimezone(self.LOCAL_TZ) for t in hourly_utc]
                     for field in self.HOURLY_FIELDS:
-                        values = raw["hourly"].get(field, [])
-                        if values:
+                        vals = hourly.get(field) or []
+                        if vals:
                             hourly_prob_map[field] = {
                                 t.replace(minute=0, second=0, microsecond=0): v
-                                for t, v in zip(hourly_local, values)
+                                for t, v in zip(hourly_local, vals)
                             }
 
+                def _get(field, i):
+                    arr = m15.get(field)
+                    if not arr or i >= len(arr):
+                        return None
+                    return arr[i]
+
+                kept = dropped = 0
                 for i, t in enumerate(times_local):
-                    entry = {
-                        field: round(raw["minutely_15"].get(field, [None]*len(times_local))[i] or 0, 2)
-                        for field in self.MINUTELY_FIELDS
-                        if field in raw["minutely_15"] and len(raw["minutely_15"][field]) > i
-                    }
-                    for h_field, h_map in hourly_prob_map.items():
-                        entry[h_field] = h_map.get(t.replace(minute=0, second=0, microsecond=0), 0)
+                    # pull raw values
+                    raw_vals = {f: _get(f, i) for f in self.MINUTELY_FIELDS}
+
+                    # reject if any required is None
+                    if any(raw_vals.get(f) is None for f in REQUIRED):
+                        dropped += 1
+                        continue
+
+                    # build entry (only real numbers)
+                    entry = {}
+                    all_ok = True
+                    for f, v in raw_vals.items():
+                        if isinstance(v, (int, float)):
+                            entry[f] = round(float(v), 2)
+                        else:
+                            all_ok = False
+                            break
+                    if not all_ok:
+                        dropped += 1
+                        continue
+
+                    # add hourly overlays
+                    hkey = t.replace(minute=0, second=0, microsecond=0)
+                    for hf, hmap in hourly_prob_map.items():
+                        hv = hmap.get(hkey)
+                        if hv is not None:
+                            entry[hf] = hv
+
                     result[name][t] = entry
+                    kept += 1
+
+                if dropped:
+                    logging.warning(f"[weather] {name}: kept {kept}, dropped {dropped} null/incomplete minutely_15 slots")
 
             except Exception as e:
-                logging.error(f"Failed to process forecast for {name}: {e}")
+                logging.error(f"[weather] Failed to process forecast for {name}: {e}")
 
         return result
 
     def _add_print_lines(self, parsed_forecast):
-        # TODO remove hardcoded values
         for name, timeline in parsed_forecast.items():
             for t, entry in timeline.items():
-                try:
-                    entry["print"] = (
-                        f"{name}: {entry['precipitation']} mm | {entry['wind_speed_10m']} km/h | "
-                        f"{entry['temperature_2m']}° | Dir {entry['wind_direction_10m']}°"
-                    )
-                except KeyError as e:
-                    entry["print"] = f"{name}: Incomplete data at {t} ({e})"
+                p = entry.get("precipitation")
+                ws = entry.get("wind_speed_10m")
+                te = entry.get("temperature_2m")
+                wd = entry.get("wind_direction_10m")
+                if None in (p, ws, te, wd):
+                    entry["print"] = f"{name}: Données incomplètes à {t:%H:%M}"
+                else:
+                    entry["print"] = f"{name}: {p} mm | {ws} km/h | {te}° | Dir {wd}°"
