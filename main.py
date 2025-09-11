@@ -90,9 +90,9 @@ if __name__ == "__main__":
             trip_duration_minutes = 45
 
             first_class, last_class = get_first_and_last_class(agenda_url, now)
-            morning_window_start = first_class - timedelta(hours=3)
-            if morning_window_start >= now:
-                if first_class and last_class:
+            if first_class and last_class:
+                morning_window_start = first_class - timedelta(hours=3)
+                if morning_window_start >= now:
                     leave_latest = (first_class - timedelta(minutes=trip_duration_minutes)).time()
                     morning_latest_departure = leave_latest.strftime("%H:%M")
                     evening_first_departure = last_class.strftime("%H:%M")
