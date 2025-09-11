@@ -35,11 +35,11 @@ jobs:
         docker build . \
           --file Dockerfile \
           --build-arg IMAGE_TAG=${IMAGE_TAG} \
-          --tag ghcr.io/$REPO_OWNER/cms:${IMAGE_TAG}
+          --tag ghcr.io/$REPO_OWNER/e42-rain-smartride:${IMAGE_TAG}
 
     # Push the Docker image to GitHub Container Registry
     - name: Push Docker image
       run: |
         REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_TAG=$([[ "${{ github.event_name }}" == "push" && "${{ github.event.ref }}" =~ ^refs/tags/ ]] && echo "${{ github.ref_name }}" || echo "${{ env.SHORT_SHA }}")
-        docker push ghcr.io/$REPO_OWNER/cms:${IMAGE_TAG}
+        docker push ghcr.io/$REPO_OWNER/e42-rain-smartride:${IMAGE_TAG}
