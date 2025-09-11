@@ -1,0 +1,45 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    # Checkout the repository
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Get the short commit hash
+    - name: Get short commit hash
+      id: vars
+      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+    # Log in to GitHub Docker Registry
+    - name: Log in to GitHub Docker Registry
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+    # Build the Docker image
+    - name: Build Docker image
+      run: |
+        REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_TAG=$([[ "${{ github.event_name }}" == "push" && "${{ github.event.ref }}" =~ ^refs/tags/ ]] && echo "${{ github.ref_name }}" || echo "${{ env.SHORT_SHA }}")
+        docker build . \
+          --file Dockerfile \
+          --build-arg IMAGE_TAG=${IMAGE_TAG} \
+          --tag ghcr.io/$REPO_OWNER/cms:${IMAGE_TAG}
+
+    # Push the Docker image to GitHub Container Registry
+    - name: Push Docker image
+      run: |
+        REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_TAG=$([[ "${{ github.event_name }}" == "push" && "${{ github.event.ref }}" =~ ^refs/tags/ ]] && echo "${{ github.ref_name }}" || echo "${{ env.SHORT_SHA }}")
+        docker push ghcr.io/$REPO_OWNER/cms:${IMAGE_TAG}
