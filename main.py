@@ -112,4 +112,7 @@ if __name__ == "__main__":
                     )
                     advisor.run_and_notify_day()
                     update_notification_status(now.date().isoformat(), True)
-
+            else:
+                logging.info("No classes today, skipping notification.")
+                update_notification_status(now.date().isoformat(), True)
+            
