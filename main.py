@@ -116,4 +116,5 @@ if __name__ == "__main__":
             else:
                 logging.info("No classes today, skipping notification.")
                 update_notification_status(now.date().isoformat(), True)
+        time.sleep(interval)
             
