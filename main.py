@@ -83,7 +83,8 @@ if __name__ == "__main__":
     logging.info(f"Starting checks with interval of {interval} seconds")
 
     while True:
-        now = datetime.now()
+        LOCAL_TZ = get_localzone()
+        now = datetime.now(LOCAL_TZ)
         # Check if today's notification has already been sent
         if not has_notification_been_sent(now.date().isoformat()):
             agenda_url = "https://hehplanning2025.umons.ac.be/Telechargements/ical/Edt_M0_Pass_Info_vers_Master_Informatique.ics?version=2025.5.6&icalsecurise=08861B133B1D1B3671E24F0A0B3CDF7F38107CD1F4F05BE68F3EB400F66270D3A53470C915AD2045ABD49481A5055CA9&param=643d5b312e2e36325d2666683d3126663d3131303030"
