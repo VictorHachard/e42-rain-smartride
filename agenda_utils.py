@@ -62,4 +62,5 @@ def get_first_and_last_class(ics_url: str, target_date: date = None, retries: in
     if not starts or not ends:
         return False, False
 
+    logging.info(f"[agenda] First class at {min(starts)}, last class at {max(ends)}")
     return min(starts), max(ends)

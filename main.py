@@ -96,12 +96,11 @@ if __name__ == "__main__":
                 logging.error(f"Error fetching or parsing agenda: {e}")
             if first_class and last_class:
                 morning_window_start = first_class - timedelta(hours=3)
-                if morning_window_start >= now:
+                if morning_window_start < now:
                     leave_latest = (first_class - timedelta(minutes=trip_duration_minutes)).time()
                     morning_latest_departure = leave_latest.strftime("%H:%M")
                     evening_first_departure = last_class.strftime("%H:%M")
 
-                    logging.info(f"First class at {first_class}, last class at {last_class}")
                     logging.info(f"Morning latest departure set to {morning_latest_departure}")
                     logging.info(f"Evening first departure set to {evening_first_departure}")
 
