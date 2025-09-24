@@ -15,9 +15,9 @@ class RideWeatherAdvisor:
         trip_duration_minutes=45,
         gear_level=-1,
         max_acceptable_rain=0.2,
-        max_acceptable_wind_speed_10m=30,
-        max_tolerated_wind_with_good_dir=35,
-        min_acceptable_temp=6,
+        max_acceptable_wind_speed_10m=25,
+        max_tolerated_wind_with_good_dir=30,
+        min_acceptable_temp=8,
         risk_score_tolerance=0.15,
         risk_score_threshold=0.6,
         banned_wmo_codes=None,
@@ -97,7 +97,7 @@ class RideWeatherAdvisor:
         return min(score, 1.0)
 
     def compute_discomfort(self, temperature_2m, precipitation, wind_speed_10m, gear_level):
-        ideal_temp = {0: 22, 1: 14, 2: 10}[gear_level]
+        ideal_temp = {0: 22, 1: 17, 2: 10}[gear_level]
         temp_penalty = abs(temperature_2m - ideal_temp) / 20
         rain_penalty = min(precipitation / 1.5, 1.0)
         wind_penalty = max(0, (wind_speed_10m - 15) / 30)
